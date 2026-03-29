@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kucing Yang Liar</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            /* Mencegah seleksi teks saat mengklik layar secara cepat */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            background-color: #F9F6F0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            font-family: 'Nunito', sans-serif;
+            overflow: hidden;
+            transition: background-color 0.8s ease, color 0.8s ease;
+            cursor: pointer; /* Menandakan seluruh layar bisa diklik */
+        }
+
+        body.dark-mode {
+            background-color: #262933;
+            color: #E2E4E9;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            padding: 20px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            background-color: transparent;
+            -webkit-tap-highlight-color: transparent; 
+        }
+
+        .score-board {
+            position: absolute;
+            top: 20px;
+            right: 40px;
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #8C7A6B;
+            transition: color 0.8s ease;
+            z-index: 10;
+        }
+
+        body.dark-mode .score-board {
+            color: #848B98;
+        }
+
+        #start-message {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 20px;
+            font-weight: 700;
+            color: #8C7A6B;
+            letter-spacing: 1px;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        body.dark-mode #start-message {
+            color: #848B98;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            margin-top: 8px;
+            display: inline-block;
+            opacity: 0.8;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+
+        .hidden {
+            opacity: 0 !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="score-board">
+            SCOR <span id="high-score">00000</span> <span id="score">00000</span>
+        </div>
+        <div id="start-message">
+            KUCING PELARI<br>
+            <span class="subtitle">Ketuk di Mana Saja untuk Mulai -@ismail</span>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('high-score');
+        const startMessage = document.getElementById('start-message');
+
+        let canvasWidth = Math.min(window.innerWidth - 40, 800);
+        let canvasHeight = 300; 
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        let isPlaying = false;
+        let isDead = false; 
+        let allowRestart = true;
+        let score = 0;
+        let highScore = 0;
+        let gameSpeed = 5;
+        let frameCount = 0;
+        let animationId;
+        let isDarkMode = false;
+        
+        let screenShake = 0;
+        let gameOverY = 0;
+        let gameOverOpacity = 0;
+
+        const gravity = 0.65;
+        let cat;
+        let obstacles = [];
+        let particles = [];
+        let clouds = [];
+        let mountains = [];
+
+        const colors = {
+            light: { cat: '#5C4E43', catAccent: '#FFB8B8', obs: '#8C7A6B', ground: '#D6C8B8', mount1: '#E8DFD3', mount2: '#F0E8DF' },
+            dark:  { cat: '#E2E4E9', catAccent: '#FF9E9E', obs: '#848B98', ground: '#4A4E5C', mount1: '#373A45', mount2: '#2F313B' }
+        };
+
+        function getCol(element) {
+            return isDarkMode ? colors.dark[element] : colors.light[element];
+        }
+
+        function initCat() {
+            cat = {
+                x: 60,
+                y: canvasHeight - 40, 
+                width: 44,
+                height: 30,
+                dy: 0,
+                dx: 0,
+                jumpForce: 11,
+                isGrounded: true,
+                rotation: 0
+            };
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 4 + 2;
+                this.vx = (Math.random() * -2) - gameSpeed * 0.5;
+                this.vy = Math.random() * -2;
+                this.life = 1;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.05;
+            }
+            draw() {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = getCol('ground');
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        class Mountain {
+            constructor(x, width, height, speedObj, colorKey) {
+                this.x = x;
+                this.width = width;
+                this.height = height;
+                this.speedMultiplier = speedObj;
+                this.colorKey = colorKey;
+            }
+            update() {
+                if(!isDead) this.x -= gameSpeed * this.speedMultiplier;
+                if (this.x + this.width < 0) {
+                    this.x = canvasWidth;
+                    this.height = Math.random() * 80 + 50;
+                }
+            }
+            draw() {
+                ctx.fillStyle = getCol(this.colorKey);
+                ctx.beginPath();
+                ctx.moveTo(this.x, canvasHeight - 40);
+                ctx.lineTo(this.x + this.width / 2, canvasHeight - 40 - this.height);
+                ctx.lineTo(this.x + this.width, canvasHeight - 40);
+                ctx.fill();
+            }
+        }
+
+        class Obstacle {
+            constructor() {
+                this.width = Math.random() > 0.5 ? 24 : 45; 
+                this.height = Math.random() > 0.5 ? 40 : 55; 
+                this.x = canvasWidth + 50;
+                this.y = canvasHeight - 40 - this.height;
+                this.type = Math.floor(Math.random() * 3);
+            }
+            update() {
+                if(!isDead) this.x -= gameSpeed;
+            }
+            draw() {
+                ctx.fillStyle = getCol('obs');
+                ctx.beginPath();
+                // Custom implementation if roundRect not available
+                if (ctx.roundRect) {
+                    if (this.type === 0) {
+                        ctx.roundRect(this.x + this.width/4, this.y, this.width/2, this.height, 8); ctx.fill();
+                        ctx.roundRect(this.x, this.y + this.height/2.5, this.width, 10, 4); ctx.fill();
+                    } else if (this.type === 1) {
+                        ctx.arc(this.x + this.width/2, this.y + this.height, this.width/2, Math.PI, 0); ctx.fill();
+                    } else {
+                        ctx.roundRect(this.x, this.y + 15, 15, this.height - 15, 6); ctx.fill();
+                        ctx.roundRect(this.x + 20, this.y + 5, 16, this.height - 5, 6); ctx.fill();
+                    }
+                } else {
+                    // Fallback simpler rects
+                    ctx.fillRect(this.x + this.width/4, this.y, this.width/2, this.height);
+                    ctx.fillRect(this.x, this.y + this.height/2.5, this.width, 10);
+                }
+            }
+        }
+
+        class Cloud {
+            constructor() {
+                this.x = canvasWidth + Math.random() * 100;
+                this.y = Math.random() * (canvasHeight / 2 - 30) + 10;
+                this.width = 50 + Math.random() * 40;
+                this.speed = (Math.random() * 0.3) + 0.2;
+                this.opacity = Math.random() * 0.5 + 0.3;
+            }
+            update() {
+                if(!isDead) this.x -= this.speed;
+            }
+            draw() {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.globalAlpha = this.opacity;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 15, Math.PI * 0.5, Math.PI * 1.5);
+                ctx.arc(this.x + 15, this.y - 10, 20, Math.PI * 1, Math.PI * 2);
+                ctx.arc(this.x + 35, this.y - 5, 15, Math.PI * 1, Math.PI * 2);
+                ctx.arc(this.x + 45, this.y, 15, Math.PI * 1.5, Math.PI * 0.5);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function initEnvironment() {
+            obstacles = [];
+            particles = [];
+            clouds = [];
+            mountains = [];
+            for(let i=0; i<5; i++) mountains.push(new Mountain(i * 200, 250, 100 + Math.random()*50, 0.1, 'mount2'));
+            for(let i=0; i<6; i++) mountains.push(new Mountain(i * 150 - 50, 200, 60 + Math.random()*40, 0.3, 'mount1'));
+            for(let i=0; i<4; i++) { let c = new Cloud(); c.x = Math.random() * canvasWidth; clouds.push(c); }
+        }
+
+        function drawCat() {
+            ctx.save();
+            let cx = cat.x + cat.width/2;
+            let cy = cat.y + cat.height/2;
+            ctx.translate(cx, cy);
+            if (!cat.isGrounded && !isDead) {
+                cat.rotation = Math.min(Math.max(cat.dy * 0.04, -0.3), 0.3);
+            } else if (isDead) {
+                cat.rotation += 0.1;
+            } else {
+                cat.rotation = 0;
+            }
+            ctx.rotate(cat.rotation);
+            ctx.translate(-cx, -cy);
+            ctx.fillStyle = getCol('cat');
+            let bx = cat.x; let by = cat.y;
+            if (ctx.roundRect) {
+                ctx.beginPath(); ctx.roundRect(bx + 12, by + 12, 22, 14, 6); ctx.fill();
+                ctx.beginPath(); ctx.roundRect(bx + 26, by, 18, 16, 6); ctx.fill();
+            } else {
+                ctx.fillRect(bx+12, by+12, 22, 14);
+                ctx.fillRect(bx+26, by, 18, 16);
+            }
+            ctx.beginPath(); ctx.moveTo(bx + 28, by + 2); ctx.lineTo(bx + 32, by - 6); ctx.lineTo(bx + 36, by + 2); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(bx + 38, by + 2); ctx.lineTo(bx + 42, by - 6); ctx.lineTo(bx + 44, by + 4); ctx.fill();
+            ctx.fillStyle = getCol('catAccent');
+            ctx.beginPath(); ctx.arc(bx + 33, by + 10, 3, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = isDarkMode ? '#262933' : '#F9F6F0';
+            if (isDead) {
+                ctx.lineWidth = 2; ctx.strokeStyle = ctx.fillStyle;
+                ctx.beginPath(); ctx.moveTo(bx+36, by+5); ctx.lineTo(bx+40, by+9); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(bx+40, by+5); ctx.lineTo(bx+36, by+9); ctx.stroke();
+            } else {
+                ctx.beginPath(); ctx.arc(bx + 38, by + 6, 2.5, 0, Math.PI*2); ctx.fill();
+            }
+            ctx.fillStyle = getCol('cat');
+            let tailOffset = isDead ? 0 : Math.sin(frameCount * 0.2) * 4;
+            ctx.beginPath(); ctx.lineCap = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = getCol('cat');
+            ctx.moveTo(bx + 14, by + 16); ctx.quadraticCurveTo(bx + 4, by + 16, bx + 2, by + 8 + tailOffset); ctx.stroke();
+            if (ctx.roundRect) {
+                if (!cat.isGrounded && !isDead) {
+                    ctx.beginPath(); ctx.roundRect(bx + 14, by + 24, 6, 6, 3); ctx.fill();
+                    ctx.beginPath(); ctx.roundRect(bx + 26, by + 24, 6, 6, 3); ctx.fill();
+                } else if (!isDead) {
+                    if (Math.floor(frameCount / 6) % 2 === 0) {
+                        ctx.beginPath(); ctx.roundRect(bx + 14, by + 24, 5, 8, 3); ctx.fill();
+                        ctx.beginPath(); ctx.roundRect(bx + 28, by + 24, 5, 8, 3); ctx.fill();
+                    } else {
+                        ctx.beginPath(); ctx.roundRect(bx + 18, by + 24, 5, 8, 3); ctx.fill();
+                        ctx.beginPath(); ctx.roundRect(bx + 24, by + 24, 5, 8, 3); ctx.fill();
+                    }
+                } else {
+                    ctx.beginPath(); ctx.roundRect(bx + 16, by + 24, 5, 6, 3); ctx.fill();
+                    ctx.beginPath(); ctx.roundRect(bx + 26, by + 24, 5, 6, 3); ctx.fill();
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawGround() {
+            ctx.strokeStyle = getCol('ground');
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(0, canvasHeight - 38); ctx.lineTo(canvasWidth, canvasHeight - 38); ctx.stroke();
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(0, canvasHeight - 30); ctx.lineTo(canvasWidth, canvasHeight - 30); ctx.stroke();
+        }
+
+        function jump() {
+            if (isDead) {
+                if (allowRestart) startGame();
+                return;
+            }
+            if (cat.isGrounded && isPlaying) {
+                cat.dy = -cat.jumpForce;
+                cat.isGrounded = false;
+                for(let i=0; i<5; i++) particles.push(new Particle(cat.x + 20, cat.y + cat.height));
+            } else if (!isPlaying) {
+                startGame();
+            }
+        }
+
+        function formatScore(s) { return Math.floor(s).toString().padStart(5, '0'); }
+
+        function drawGameOver() {
+            gameOverY += (canvasHeight/2 - 20 - gameOverY) * 0.1; 
+            gameOverOpacity = Math.min(1, gameOverOpacity + 0.05);
+            ctx.save();
+            ctx.globalAlpha = gameOverOpacity;
+            ctx.fillStyle = getCol('obs');
+            ctx.font = '900 36px "Nunito", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvasWidth / 2, gameOverY);
+            ctx.font = '700 16px "Nunito", sans-serif';
+            if (Math.floor(frameCount / 30) % 2 === 0) {
+                ctx.fillText('Ketuk Layar untuk Main Lagi', canvasWidth / 2, gameOverY + 35);
+            }
+            ctx.restore();
+        }
+
+        function checkCollision(obstacle) {
+            let catHitbox = { x: cat.x + 15, y: cat.y + 10, w: cat.width - 25, h: cat.height - 10 };
+            let obsHitbox = { x: obstacle.x + 8, y: obstacle.y + 8, w: obstacle.width - 16, h: obstacle.height - 10 };
+            return catHitbox.x < obsHitbox.x + obsHitbox.w && catHitbox.x + catHitbox.w > obsHitbox.x && catHitbox.y < obsHitbox.y + obsHitbox.h && catHitbox.y + catHitbox.h > obsHitbox.y;
+        }
+
+        function triggerDeath() {
+            isDead = true;
+            allowRestart = false;
+            setTimeout(() => allowRestart = true, 500);
+            cat.dy = -8; cat.dx = -3; cat.isGrounded = false;
+            screenShake = 15;
+            gameOverY = canvasHeight / 2 - 50; gameOverOpacity = 0;
+            if (score > highScore) { highScore = score; highScoreElement.innerText = formatScore(highScore); }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            frameCount++;
+            ctx.save();
+            if (screenShake > 0) {
+                ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
+                screenShake *= 0.8;
+                if(screenShake < 0.5) screenShake = 0;
+            }
+            if (frameCount % 120 === 0 && Math.random() > 0.3) clouds.push(new Cloud());
+            mountains.forEach(m => { m.update(); m.draw(); });
+            clouds.forEach((c, i) => { c.update(); c.draw(); if (c.x + c.width < 0) clouds.splice(i, 1); });
+            drawGround();
+            if (!isDead && cat.isGrounded && frameCount % 5 === 0) particles.push(new Particle(cat.x + 10, cat.y + cat.height));
+            particles.forEach((p, i) => { p.update(); p.draw(); if (p.life <= 0) particles.splice(i, 1); });
+            let spawnRate = Math.max(50, 100 - Math.floor(score / 20)); 
+            if (!isDead && frameCount % spawnRate === 0 && Math.random() > 0.2) obstacles.push(new Obstacle());
+            for (let i = 0; i < obstacles.length; i++) {
+                let obs = obstacles[i]; obs.update(); obs.draw();
+                if (!isDead && checkCollision(obs)) triggerDeath();
+                if (obs.x + obs.width < 0) { obstacles.splice(i, 1); i--; }
+            }
+            cat.y += cat.dy; cat.x += cat.dx;
+            if (cat.y + cat.height < canvasHeight - 40) { cat.dy += gravity; cat.isGrounded = false; }
+            else { if(!isDead) { cat.dy = 0; cat.isGrounded = true; cat.y = canvasHeight - 40 - cat.height; } }
+            drawCat(); ctx.restore();
+            if (!isDead && isPlaying) {
+                score += 0.1; scoreElement.innerText = formatScore(score);
+                if (Math.floor(score) % 100 === 0 && Math.floor(score) !== 0) gameSpeed += 0.005;
+                if (Math.floor(score) > 0 && Math.floor(score) % 300 === 0) { isDarkMode = !isDarkMode; document.body.classList.toggle('dark-mode', isDarkMode); }
+            } else if (isDead) drawGameOver();
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function startGame() {
+            initCat(); initEnvironment();
+            score = 0; gameSpeed = 6; frameCount = 0;
+            isPlaying = true; isDead = false; isDarkMode = false;
+            document.body.classList.remove('dark-mode');
+            scoreElement.innerText = formatScore(score);
+            startMessage.classList.add('hidden');
+            cancelAnimationFrame(animationId);
+            animate();
+        }
+
+        // --- Kontrol Global (Seluruh Layar) ---
+        
+        // Klik mouse di mana saja di layar
+        window.addEventListener('mousedown', (e) => {
+            jump();
+        });
+
+        // Sentuhan jari di mana saja di layar (Mobile)
+        window.addEventListener('touchstart', (e) => {
+            // Mencegah zoom/scroll tidak sengaja
+            if (e.cancelable) e.preventDefault();
+            jump();
+        }, { passive: false });
+
+        // Tombol keyboard (tetap ada sebagai opsional)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault(); 
+                jump();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            canvasWidth = Math.min(window.innerWidth - 40, 800);
+            canvas.width = canvasWidth;
+            if (!isPlaying && !isDead) {
+                initCat(); initEnvironment(); drawGround();
+                mountains.forEach(m => m.draw()); drawCat();
+            }
+        });
+
+        initCat(); initEnvironment(); mountains.forEach(m => m.draw()); drawGround(); drawCat();
+    </script>
+</body>
+</html>
+
